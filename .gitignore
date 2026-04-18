@@ -1,1 +1,3 @@
 node_modules
+backend/.firebase/service_account.json
+frontend/firebase-debug.log
