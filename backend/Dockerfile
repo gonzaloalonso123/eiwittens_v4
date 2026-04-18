@@ -16,12 +16,8 @@ RUN pnpm install --frozen-lockfile
 COPY packages/types/ ./packages/types/
 COPY backend/src/ ./backend/src/
 
-# Build types first, then backend
-RUN pnpm --filter @eiwittens/types build && \
-    echo "=== Types dist ===" && ls -la packages/types/dist/ && \
-    echo "=== Symlink ===" && ls -la backend/node_modules/@eiwittens/ 2>/dev/null || true && \
-    echo "=== Root symlink ===" && ls -la node_modules/@eiwittens/ 2>/dev/null || true
-RUN cd backend && pnpm exec tsc
+# Build types and backend via project references
+RUN cd backend && pnpm exec tsc --build
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
 FROM node:20-slim

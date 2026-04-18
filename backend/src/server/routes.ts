@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { Response } from 'express';
+import type { Router as RouterType, Response } from 'express';
 import { scrapeAndPush } from '../pipeline/index.js';
 import { refreshTrustPilot } from '../jobs/trustpilot.js';
 import { createBackup } from '../jobs/backup.js';
@@ -10,7 +10,7 @@ import { requireAuth } from './auth.js';
 import type { ScraperAction, ProductCreate } from '@eiwittens/types';
 import { asyncHandler, minimizeProducts } from '../lib/utils.js';
 
-export const router = Router();
+export const router: RouterType = Router();
 
 // ── Public routes ────────────────────────────────────────────────────────────
 
@@ -18,8 +18,8 @@ router.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-router.get('/products/:type', asyncHandler(async (req, res) => {
-    const type = req.params.type as string;
+router.get('/products', asyncHandler(async (req, res) => {
+    const type = req.query.type as string;
     const products = await getProducts();
     if (type === 'MINIMAL') {
         res.json(minimizeProducts(products));

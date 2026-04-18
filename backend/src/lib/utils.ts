@@ -45,7 +45,7 @@ export function asyncHandler(
 
 export function minimizeProducts(products: Product[]): Partial<Product>[] {
     return products.map(p => {
-        const { scraper, count_clicked, cookieBannerXPaths, ...rest } = p;
+        const { scraper, count_clicked, cookieBannerXPaths, price_history, ...rest } = p;
         return rest;
     })
 }

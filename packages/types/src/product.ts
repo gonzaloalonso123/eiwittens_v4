@@ -64,7 +64,8 @@ export interface Product {
     price_per_1000_calories?: number;
 
     // Analytics
-    count_clicked?: Array<{ date: string }>;
+    count_clicked?: Array<{ date: { seconds: number; nanoseconds: number } }>;
+    price_history?: Array<{ date: string; scrapedData: number }>;
 }
 
 export type ProductUpdate = Partial<Omit<Product, 'id'>>;

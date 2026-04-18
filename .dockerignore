@@ -1,11 +1,7 @@
-node_modules/
-dist/
-.env
+**/node_modules/
+**/dist/
+**/*.tsbuildinfo
+**/.env
 *.log
 .git/
 frontend/
-backend/node_modules/
-backend/dist/
-backend/.env
-packages/types/node_modules/
-packages/types/dist/
