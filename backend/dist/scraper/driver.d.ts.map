@@ -1,0 +1,1 @@
+{"version":3,"file":"driver.d.ts","sourceRoot":"","sources":["../../src/scraper/driver.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAA2B,IAAI,EAAE,MAAM,YAAY,CAAC;AAIhE,MAAM,WAAW,YAAY;IACzB,IAAI,EAAE,IAAI,CAAC;IACX,OAAO,EAAE,MAAM,OAAO,CAAC,IAAI,CAAC,CAAC;CAChC;AAED,wBAAsB,YAAY,IAAI,OAAO,CAAC,YAAY,CAAC,CA8C1D"}

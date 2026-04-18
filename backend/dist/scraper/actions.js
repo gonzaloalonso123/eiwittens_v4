@@ -1,0 +1,108 @@
+import { ActionType } from '@eiwittens/types';
+import { locate } from '../lib/utils.js';
+const DEFAULT_TIMEOUT_MS = 5000;
+const MAX_RETRIES = 3;
+const RETRY_BACKOFF_MS = 1000;
+const DEFAULT_COOKIE_BANNERS = [
+    { selectorType: 'xpath', value: "//button[contains(text(), 'Accept')]" },
+    { selectorType: 'xpath', value: "//button[contains(text(), 'Accept All')]" },
+    { selectorType: 'xpath', value: "//button[contains(text(), 'Alles accepteren')]" },
+    { selectorType: 'xpath', value: "//button[contains(text(), 'Accepteren')]" },
+    { selectorType: 'xpath', value: "//button[contains(@class, 'accept-cookies')]" },
+    { selectorType: 'xpath', value: "//button[contains(@id, 'onetrust-accept-btn-handler')]" },
+    { selectorType: 'xpath', value: "//button[contains(@id, 'accept')]" },
+    { selectorType: 'xpath', value: '//*[@id="CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll"]' },
+    { selectorType: 'xpath', value: "//*[@id='onetrust-accept-btn-handler']" },
+    { selectorType: 'xpath', value: '/html/body/div[2]/div/div/div/button[3]' },
+];
+export async function dismissCookieBanner(page, extraXPaths = [], timeout = DEFAULT_TIMEOUT_MS) {
+    const banners = [
+        ...extraXPaths.map((v) => ({ selectorType: 'xpath', value: v })),
+        ...DEFAULT_COOKIE_BANNERS,
+    ];
+    // Race all selectors in parallel — click whichever appears first
+    try {
+        const winner = await Promise.any(banners.map(async (banner) => {
+            const el = locate(page, banner.selectorType, banner.value).first();
+            await el.waitFor({ state: 'visible', timeout });
+            return el;
+        }));
+        await winner.click();
+        await page.waitForTimeout(500);
+    }
+    catch {
+        // No cookie banner found — that's fine
+    }
+}
+export async function executeActions(page, actions, timeout = DEFAULT_TIMEOUT_MS, onAction) {
+    let priceAccumulator = '';
+    for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        await onAction?.(i, action, 'start');
+        try {
+            priceAccumulator = await executeWithRetry(page, action, priceAccumulator, timeout);
+            await onAction?.(i, action, 'done');
+        }
+        catch (err) {
+            await onAction?.(i, action, 'failed', err.message);
+            throw err;
+        }
+    }
+    return priceAccumulator;
+}
+async function executeWithRetry(page, action, currentPrice, timeout) {
+    let lastError;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await executeAction(page, action, currentPrice, timeout);
+        }
+        catch (err) {
+            lastError = err;
+            if (attempt < MAX_RETRIES) {
+                await page.waitForTimeout(RETRY_BACKOFF_MS);
+            }
+        }
+    }
+    throw lastError;
+}
+async function executeAction(page, action, currentPrice, timeout) {
+    switch (action.type) {
+        case ActionType.Click: {
+            const el = locate(page, action.selectorType, action.selectorValue).first();
+            await el.waitFor({ state: 'visible', timeout });
+            await el.click();
+            return currentPrice;
+        }
+        case ActionType.SelectOption: {
+            const el = locate(page, action.selectorType, action.selectorValue).first();
+            await el.waitFor({ state: 'visible', timeout });
+            await el.selectOption({ label: action.optionText });
+            return currentPrice;
+        }
+        case ActionType.Select: {
+            let text;
+            if (action.selectorValue.endsWith('/text()')) {
+                // Extract only direct text nodes, skipping child element text
+                const parentXPath = action.selectorValue.replace('/text()', '');
+                const parentEl = locate(page, action.selectorType, parentXPath).first();
+                await parentEl.waitFor({ state: 'attached', timeout });
+                text = await parentEl.evaluate((el) => Array.from(el.childNodes)
+                    .filter((n) => n.nodeType === Node.TEXT_NODE)
+                    .map((n) => n.textContent?.trim() ?? '')
+                    .join(''));
+            }
+            else {
+                const el = locate(page, action.selectorType, action.selectorValue).first();
+                await el.waitFor({ state: 'visible', timeout });
+                text = (await el.innerText()).trim();
+            }
+            // Accumulate price fragments: '12' then '99' → '12.99'
+            return currentPrice === '' ? text : `${currentPrice}.${text}`;
+        }
+        case ActionType.Wait: {
+            await page.waitForTimeout(action.duration ?? 2000);
+            return currentPrice;
+        }
+    }
+}
+//# sourceMappingURL=actions.js.map

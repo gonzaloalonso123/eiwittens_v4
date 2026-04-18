@@ -1,0 +1,39 @@
+{
+    "name": "eiwittens-backend",
+    "version": "1.0.0",
+    "description": "Sports supplement price scraping backend",
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/main.js",
+        "dev": "tsx src/main.ts",
+        "deploy": "./deploy.sh",
+        "migrate": "tsx src/migrations/001-rename-fields.ts",
+        "migrate:types": "tsx src/migrations/002-coerce-types.ts"
+    },
+    "dependencies": {
+        "@eiwittens/types": "workspace:*",
+        "cors": "^2.8.5",
+        "dotenv": "^16.6.1",
+        "express": "^4.21.2",
+        "firebase-admin": "^12.6.0",
+        "jsdom": "^26.0.0",
+        "nodemailer": "^6.9.15",
+        "openai": "^4.89.0",
+        "playwright": "^1.59.1",
+        "playwright-extra": "^4.3.6",
+        "puppeteer-extra-plugin-stealth": "^2.11.2",
+        "selenium-webdriver": "^4.28.1",
+        "zod": "^3.24.2"
+    },
+    "devDependencies": {
+        "@types/cors": "^2.8.17",
+        "@types/express": "^5.0.0",
+        "@types/jsdom": "^21.1.7",
+        "@types/node": "^22.0.0",
+        "@types/nodemailer": "^6.4.17",
+        "@types/selenium-webdriver": "^4.35.5",
+        "tsx": "^4.19.2",
+        "typescript": "^5.7.3"
+    }
+}

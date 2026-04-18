@@ -1,0 +1,9 @@
+services:
+  backend:
+    build: .
+    container_name: eiwittens-backend
+    restart: unless-stopped
+    ports:
+      - "709:709"
+    env_file:
+      - .env

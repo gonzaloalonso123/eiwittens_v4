@@ -1,0 +1,13 @@
+{
+    "name": "eiwittens",
+    "private": true,
+    "scripts": {
+        "dev:backend": "pnpm --filter eiwittens-backend dev",
+        "dev:frontend": "pnpm --filter eiwittens-frontend dev",
+        "build": "pnpm -r build",
+        "build:types": "pnpm --filter @eiwittens/types build",
+        "build:backend": "pnpm --filter eiwittens-backend build",
+        "build:frontend": "pnpm --filter eiwittens-frontend build",
+        "migrate": "pnpm --filter eiwittens-backend migrate"
+    }
+}
