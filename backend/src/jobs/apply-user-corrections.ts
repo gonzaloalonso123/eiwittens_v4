@@ -155,7 +155,9 @@ const resolved: ResolvedCorrection[] = CORRECTIONS.map((c) => {
     return { ...c, matched, status };
 });
 
-// Also add the 22 HIGH-CONFIDENCE auto-fix amount updates (from auto-fix-data-quality v4)
+// Also add the HIGH-CONFIDENCE auto-fix amount updates, but skip no-ops where
+// new_amount === current_amount (DQ audit false positives caused by string-match
+// of "700g" not matching the page's "700gram" — the auto-fix returned the same value).
 if (SECTION_1_HIGH_CONF_FIXES_FROM_AUTOFIX) {
     try {
         const { readdir, readFile } = await import('node:fs/promises');
@@ -166,8 +168,10 @@ if (SECTION_1_HIGH_CONF_FIXES_FROM_AUTOFIX) {
                 productId: string; store: string; name: string; current_amount?: number;
                 action: string; new_amount?: number; confidence: string;
             }>;
-            const highConf = latest.filter((f) => f.action === 'update_amount' && f.confidence === 'high');
-            console.log(`[corrections] Adding ${highConf.length} HIGH-confidence auto-fix amount updates from Section 1`);
+            const highConfRaw = latest.filter((f) => f.action === 'update_amount' && f.confidence === 'high');
+            const highConf = highConfRaw.filter((f) => f.new_amount !== f.current_amount);
+            const skipped = highConfRaw.length - highConf.length;
+            console.log(`[corrections] Auto-fix Section 1: ${highConfRaw.length} raw, ${skipped} no-ops skipped, ${highConf.length} actual updates`);
             for (const f of highConf) {
                 const product = products.find((p) => p.id === f.productId);
                 if (!product) continue;
@@ -176,7 +180,7 @@ if (SECTION_1_HIGH_CONF_FIXES_FROM_AUTOFIX) {
                     name_contains: f.name,
                     action: 'update_amount',
                     new_amount: f.new_amount!,
-                    reason: 'auto-fix HIGH confidence',
+                    reason: `auto-fix HIGH confidence (${f.current_amount}g → ${f.new_amount}g)`,
                     matched: [product],
                     status: 'matched',
                 });
