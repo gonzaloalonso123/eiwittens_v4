@@ -4,6 +4,16 @@ export interface Ingredient {
     name: string;
     amount: number;
 }
+/**
+ * Strategy used to extract the current price for this product.
+ * - 'playwright' (default) — current XPath/Click/Select actions via Playwright; AI fallback
+ * - 'free_jsonld' — direct HTTP fetch + Schema.org JSON-LD Product offers
+ * - 'free_shopify' — Shopify /products/<handle>.json endpoint
+ * - 'free_og' — OpenGraph product:price:amount meta
+ * - 'free_microdata' — Inline itemprop="price"
+ * - 'feed_awin' — Daily Awin product datafeed (no scrape on this product)
+ */
+export type ExtractionMethod = 'playwright' | 'free_jsonld' | 'free_shopify' | 'free_og' | 'free_microdata' | 'feed_awin';
 export interface Product {
     id: string;
     name: string;
@@ -18,6 +28,7 @@ export interface Product {
     enabled_top10: boolean;
     only_in_store: boolean;
     warning?: boolean;
+    extraction_method?: ExtractionMethod;
     scraper: ScraperAction[];
     cookieBannerXPaths?: string[];
     scrapeTarget?: ScrapeTarget;

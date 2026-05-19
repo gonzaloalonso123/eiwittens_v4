@@ -1,13 +1,14 @@
 import { createDriver, createPage } from './driver.js';
 import { dismissCookieBanner, executeActions } from './actions.js';
 import { aiExtractPrice } from './extractor.js';
+import { extractFreePrice, NoFreeExtractionAvailable, type FreeExtractionMethod } from './free-extractor.js';
 import { takeScreenshot } from './helpers.js';
 import { isHighConfidenceValidation, validateScrapeResult } from './validation.js';
 import { cleanPrice } from '../lib/utils.js';
 import { updateProduct } from '../db/products.js';
-import type { Product, ScrapeValidationResult, ScraperAction } from '@eiwittens/types';
+import type { Product, ScrapeValidationResult, ScraperAction, ExtractionMethod } from '@eiwittens/types';
 import { ActionType } from '@eiwittens/types';
-import type { Browser } from 'playwright';
+import type { Browser, Page } from 'playwright';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -235,6 +236,14 @@ export async function scrapeProductWithBrowser(
     }
 }
 
+// Mapping from product.extraction_method to the Free Extractor's internal method
+const FREE_METHOD_MAP: Record<string, FreeExtractionMethod> = {
+    free_jsonld: 'jsonld',
+    free_shopify: 'shopify_json',
+    free_og: 'og',
+    free_microdata: 'microdata',
+};
+
 async function scrapeProductOnPage(
     product: Product,
     page: import('playwright').Page,
@@ -244,6 +253,36 @@ async function scrapeProductOnPage(
     let aiUsed = false;
     let validation: ScrapeValidationResult | undefined;
 
+    const method: ExtractionMethod = product.extraction_method ?? 'playwright';
+
+    // ── Layer 1: Feed-managed products — price comes from feed import job, no scrape ──
+    if (method === 'feed_awin') {
+        console.log(`[scraper] "${product.name}" is feed_awin — skipping scrape (price managed by feed import)`);
+        return { price: product.price, aiUsed: false, validation: undefined };
+    }
+
+    // ── Layer 0: Free Extractor for products flagged with a free_* extraction method ──
+    if (method.startsWith('free_')) {
+        try {
+            const preferMethod = FREE_METHOD_MAP[method];
+            const browser = page.context().browser() ?? undefined;
+            const free = await extractFreePrice(product.url, {
+                preferMethod,
+                playwrightBrowser: browser,
+                amountGrams: product.amount,
+            });
+            price = free.price;
+            validation = await validateScrapeResult(page, product, price);
+            console.log(`[scraper] Layer 0 (${method}) succeeded for "${product.name}" — price=${price} via ${free.method}/${free.fetch_method}`);
+            return { price, aiUsed: false, validation };
+        } catch (err) {
+            const msg = (err as Error).message;
+            console.warn(`[scraper] Layer 0 (${method}) failed for "${product.name}": ${msg}. Falling back to Playwright + XPath.`);
+            // Fall through to Playwright pipeline below
+        }
+    }
+
+    // ── Layer 1/2: existing Playwright + XPath flow ──
     console.log(`[scraper] Navigating to ${product.url}`);
     await page.goto(product.url, { waitUntil: 'domcontentloaded' });
 

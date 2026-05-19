@@ -20,6 +20,7 @@
         "cloud:scrape:logs": "gcloud logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"daily-scrape-runner\"' --project eiwittens --freshness=2d --limit=200 --format='table(timestamp,severity,textPayload)'"
     },
     "dependencies": {
+        "@anthropic-ai/sdk": "^0.96.0",
         "@eiwittens/types": "workspace:*",
         "cors": "^2.8.5",
         "dotenv": "^16.6.1",

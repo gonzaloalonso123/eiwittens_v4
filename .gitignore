@@ -3,3 +3,7 @@ backend/.firebase/service_account.json
 frontend/firebase-debug.log
 frontend/dist
 backend/dist
+.env
+.env.local
+.env.production
+.DS_Store
