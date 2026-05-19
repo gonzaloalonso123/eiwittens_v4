@@ -45,7 +45,7 @@ export function useScraperTest(
         };
 
         const { cancel } = testScraperStream(
-            product.url,
+            product,
             actions,
             cookieXPaths.length > 0 ? cookieXPaths : undefined,
             (event: ScraperEvent) => {
@@ -72,22 +72,29 @@ export function useScraperTest(
                     setResult(r);
                     if (r.screenshot) setScreenshot(r.screenshot);
 
-                    if (r.aiFixed && r.fixedActions && r.fixedActions.length > 0) {
-                        addLog('AI fix found! Saving updated actions...', 'ai');
+                    const trustedFix = r.validation?.ok === true && r.validation.confidence === 'high';
+
+                    if (r.aiFixed && trustedFix && r.fixedActions && r.fixedActions.length > 0) {
+                        addLog('High-confidence AI fix found. Saving updated actions...', 'ai');
                         const fixed = r.fixedActions.map((a) => ({ ...a, id: a.id || newActionId() }));
                         setActions(fixed);
                         updateProduct(id!, { scraper: fixed }).then(() => {
                             queryClient.invalidateQueries({ queryKey: ['product', id] });
-                            addLog('AI-fixed actions saved', 'success');
+                            addLog('Verified AI-fixed actions saved', 'success');
                         }).catch(() => {
                             addLog('Failed to auto-save AI fix — click Save manually', 'error');
                         });
+                    } else if (r.aiFixed && !trustedFix) {
+                        addLog('AI returned a candidate, but validation was not high confidence. Actions were not saved.', 'error');
                     }
 
                     if (r.success) {
-                        addLog(`Price: €${r.price.toFixed(2)}${r.aiFixed ? ' (AI fixed)' : ''}`, 'success');
+                        const validationText = r.validation
+                            ? ` — ${r.validation.confidence} confidence (${r.validation.score}/100)`
+                            : '';
+                        addLog(`Price: €${r.price.toFixed(2)}${r.aiFixed ? ' (AI fixed)' : ''}${validationText}`, 'success');
                     } else {
-                        addLog(r.error ?? 'Scraper test failed', 'error');
+                        addLog(r.error ?? r.message ?? 'Scraper test failed', 'error');
                     }
 
                     setTesting(false);

@@ -13,7 +13,7 @@ export interface Warning {
 export function applyWarnings(products: Product[]): Product[] {
     return products.map((p) => ({
         ...p,
-        warning: p.price === 0 || !p.amount,
+        warning: !Number.isFinite(p.price) || p.price <= 0,
     }));
 }
 

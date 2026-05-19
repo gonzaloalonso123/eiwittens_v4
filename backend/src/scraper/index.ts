@@ -1,17 +1,24 @@
-import { createDriver } from './driver.js';
+import { createDriver, createPage } from './driver.js';
 import { dismissCookieBanner, executeActions } from './actions.js';
 import { aiExtractPrice } from './extractor.js';
 import { takeScreenshot } from './helpers.js';
+import { isHighConfidenceValidation, validateScrapeResult } from './validation.js';
 import { cleanPrice } from '../lib/utils.js';
 import { updateProduct } from '../db/products.js';
-import type { Product, ScraperAction } from '@eiwittens/types';
+import type { Product, ScrapeValidationResult, ScraperAction } from '@eiwittens/types';
 import { ActionType } from '@eiwittens/types';
+import type { Browser } from 'playwright';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ScrapeResult {
     price: number;
     aiUsed: boolean;
+    validation?: ScrapeValidationResult;
+}
+
+export interface ScrapeOptions {
+    persistFixedScraper?: boolean;
 }
 
 export interface TestScrapeStepEvent {
@@ -27,6 +34,7 @@ export interface TestScrapeResultEvent {
     price: number;
     screenshot: string | null;
     aiFixed: boolean;
+    validation?: ScrapeValidationResult;
     fixedActions?: ScraperAction[];
     message?: string;
     error?: string;
@@ -51,12 +59,14 @@ function emitResult(onEvent: OnEvent, data: TestScrapeResultEvent): void {
 // ── Test scrape with progress ────────────────────────────────────────────────
 
 export async function testScrapeWithProgress(
-    url: string,
+    productOrUrl: Product | string,
     actions: ScraperAction[],
     cookieBannerXPaths: string[],
     onEvent: OnEvent,
 ): Promise<void> {
     const { page, cleanup } = await createDriver();
+    const product = typeof productOrUrl === 'string' ? undefined : productOrUrl;
+    const url = typeof productOrUrl === 'string' ? productOrUrl : productOrUrl.url;
 
     try {
         // Navigate
@@ -105,12 +115,26 @@ export async function testScrapeWithProgress(
             });
 
             const price = cleanPrice(raw);
-            emitResult(onEvent, {
-                success: price > 0,
-                price,
-                screenshot: await takeScreenshot(page),
-                aiFixed: false,
-            });
+            const validation = await validateScrapeResult(page, product, price);
+
+            if (validation.ok) {
+                emitResult(onEvent, {
+                    success: true,
+                    price,
+                    screenshot: await takeScreenshot(page),
+                    aiFixed: false,
+                    validation,
+                    message: formatValidationSummary(validation),
+                });
+            } else {
+                actionsFailed = true;
+                actionError = `Validation failed: ${formatValidationSummary(validation)}`;
+                emitStep(onEvent, {
+                    step: 'validation_failed',
+                    message: actionError,
+                    screenshot: await takeScreenshot(page),
+                });
+            }
         } catch (err) {
             actionsFailed = true;
             actionError = (err as Error).message;
@@ -136,16 +160,31 @@ export async function testScrapeWithProgress(
                 // replace only the Select actions with the AI-found selector(s)
                 const nonSelectActions = actions.filter((a) => a.type !== ActionType.Select);
                 const mergedActions = [...nonSelectActions, ...aiResult.fixedScraper];
+                const replay = aiResult.fixedScraper.length > 0
+                    ? await replayActionsForValidation(page, url, mergedActions, cookieBannerXPaths, product)
+                    : {
+                        price: aiResult.price,
+                        validation: await validateScrapeResult(page, product, aiResult.price),
+                    };
+                const canPersistFix = aiResult.fixedScraper.length > 0 && isHighConfidenceValidation(replay.validation);
 
-                console.log('AI fixed the scraper! Merged actions:', mergedActions, aiResult.fixedScraper);
+                console.log('AI fallback result:', {
+                    mergedActions,
+                    fixedScraper: aiResult.fixedScraper,
+                    validation: replay.validation,
+                    canPersistFix,
+                });
 
                 emitResult(onEvent, {
-                    success: aiResult.price > 0,
-                    price: aiResult.price,
+                    success: replay.validation.ok,
+                    price: replay.price,
                     screenshot: await takeScreenshot(page),
                     aiFixed: true,
-                    fixedActions: mergedActions,
-                    message: 'AI found a working selector',
+                    validation: replay.validation,
+                    fixedActions: canPersistFix ? mergedActions : undefined,
+                    message: canPersistFix
+                        ? 'AI found a high-confidence selector after replay validation'
+                        : `AI found a price, but fix was not trusted enough to save: ${formatValidationSummary(replay.validation)}`,
                 });
             } catch (aiErr) {
                 emitResult(onEvent, {
@@ -172,53 +211,125 @@ export async function testScrapeWithProgress(
 
 // ── Production scrape (batch pipeline) ───────────────────────────────────────
 
-export async function scrapeProduct(product: Product): Promise<ScrapeResult> {
+export async function scrapeProduct(product: Product, options: ScrapeOptions = {}): Promise<ScrapeResult> {
     const { page, cleanup } = await createDriver();
-    let price = 0;
-    let aiUsed = false;
 
     try {
-        console.log(`[scraper] Navigating to ${product.url}`);
-        await page.goto(product.url, { waitUntil: 'domcontentloaded' });
-
-        const title = await page.title();
-        const currentUrl = page.url();
-        console.log(`[scraper] Page loaded — title="${title}" url=${currentUrl}`);
-
-        await dismissCookieBanner(page, product.cookieBannerXPaths ?? []);
-        console.log(`[scraper] Cookie banner dismissed (or not present)`);
-
-        try {
-            const raw = await executeActions(page, product.scraper);
-            price = cleanPrice(raw);
-        } catch (domError) {
-            console.warn(
-                `[scraper] DOM extraction failed for "${product.name}", trying AI fallback.`,
-                (domError as Error).message,
-            );
-            try {
-                const aiResult = await aiExtractPrice(page, product.url);
-                price = aiResult.price;
-                aiUsed = true;
-                console.log(`[scraper] AI fallback succeeded for "${product.name}" — price=${price}`);
-
-                // Persist the discovered selector so future scrapes don't need AI
-                if (aiResult.fixedScraper.length > 0) {
-                    await updateProduct(product.id, { ...product, scraper: aiResult.fixedScraper });
-                    console.log(`[scraper] Scraper auto-fixed for "${product.name}" — selector persisted`);
-                }
-            } catch (aiError) {
-                console.error(
-                    `[scraper] AI fallback also failed for "${product.name}":`,
-                    (aiError as Error).message,
-                );
-            }
-        }
-
-        console.log(`[scraper] Final result for "${product.name}": price=${price} aiUsed=${aiUsed}`);
+        return await scrapeProductOnPage(product, page, options);
     } finally {
         await cleanup();
     }
+}
 
-    return { price, aiUsed };
+export async function scrapeProductWithBrowser(
+    product: Product,
+    browser: Browser,
+    options: ScrapeOptions = {},
+): Promise<ScrapeResult> {
+    const { page, cleanup } = await createPage(browser);
+
+    try {
+        return await scrapeProductOnPage(product, page, options);
+    } finally {
+        await cleanup();
+    }
+}
+
+async function scrapeProductOnPage(
+    product: Product,
+    page: import('playwright').Page,
+    options: ScrapeOptions,
+): Promise<ScrapeResult> {
+    let price = 0;
+    let aiUsed = false;
+    let validation: ScrapeValidationResult | undefined;
+
+    console.log(`[scraper] Navigating to ${product.url}`);
+    await page.goto(product.url, { waitUntil: 'domcontentloaded' });
+
+    const title = await page.title();
+    const currentUrl = page.url();
+    console.log(`[scraper] Page loaded — title="${title}" url=${currentUrl}`);
+
+    await dismissCookieBanner(page, product.cookieBannerXPaths ?? []);
+    console.log(`[scraper] Cookie banner dismissed (or not present)`);
+
+    try {
+        const raw = await executeActions(page, product.scraper);
+        price = cleanPrice(raw);
+        validation = await validateScrapeResult(page, product, price);
+        if (!validation.ok) {
+            throw new Error(`Validation failed: ${formatValidationSummary(validation)}`);
+        }
+    } catch (domError) {
+        console.warn(
+            `[scraper] DOM extraction or validation failed for "${product.name}", trying AI fallback.`,
+            (domError as Error).message,
+        );
+        try {
+            await page.goto(product.url, { waitUntil: 'domcontentloaded' });
+            await dismissCookieBanner(page, product.cookieBannerXPaths ?? []);
+
+            const aiResult = await aiExtractPrice(page, product.url);
+            const nonSelectActions = product.scraper.filter((a) => a.type !== ActionType.Select);
+            const fixedActions = [...nonSelectActions, ...aiResult.fixedScraper];
+            const replay = aiResult.fixedScraper.length > 0
+                ? await replayActionsForValidation(page, product.url, fixedActions, product.cookieBannerXPaths ?? [], product)
+                : {
+                    price: aiResult.price,
+                    validation: await validateScrapeResult(page, product, aiResult.price),
+                };
+
+            if (!isHighConfidenceValidation(replay.validation)) {
+                validation = replay.validation;
+                console.warn(
+                    `[scraper] AI fallback rejected for "${product.name}" — ${formatValidationSummary(replay.validation)}`,
+                );
+                price = 0;
+            } else {
+                price = replay.price;
+                validation = replay.validation;
+                aiUsed = true;
+                console.log(`[scraper] AI fallback succeeded for "${product.name}" — price=${price}`);
+
+                // Persist only when the discovered selector survives a clean replay validation.
+                if (aiResult.fixedScraper.length > 0 && options.persistFixedScraper !== false) {
+                    await updateProduct(product.id, { scraper: fixedActions });
+                    console.log(`[scraper] Scraper auto-fixed for "${product.name}" — high-confidence selector persisted`);
+                }
+            }
+        } catch (aiError) {
+            console.error(
+                `[scraper] AI fallback also failed for "${product.name}":`,
+                (aiError as Error).message,
+            );
+        }
+    }
+
+    console.log(
+        `[scraper] Final result for "${product.name}": price=${price} aiUsed=${aiUsed}` +
+        (validation ? ` validation=${validation.confidence}/${validation.score}` : ''),
+    );
+
+    return { price, aiUsed, validation };
+}
+
+async function replayActionsForValidation(
+    page: import('playwright').Page,
+    url: string,
+    actions: ScraperAction[],
+    cookieBannerXPaths: string[],
+    product: Product | undefined,
+): Promise<{ price: number; validation: ScrapeValidationResult }> {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await dismissCookieBanner(page, cookieBannerXPaths);
+    const raw = await executeActions(page, actions);
+    const price = cleanPrice(raw);
+    const validation = await validateScrapeResult(page, product, price);
+    return { price, validation };
+}
+
+function formatValidationSummary(validation: ScrapeValidationResult): string {
+    const details = [...validation.evidence, ...validation.reasons].slice(0, 4).join('; ');
+    return `${validation.confidence} confidence (${validation.score}/100)${details ? ` — ${details}` : ''}`;
 }

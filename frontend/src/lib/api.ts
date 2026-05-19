@@ -1,4 +1,4 @@
-import type { Product, ProductCreate, ProductUpdate, ScraperAction } from '@eiwittens/types';
+import type { Product, ProductCreate, ProductUpdate, ScrapeValidationResult, ScraperAction } from '@eiwittens/types';
 import { auth } from '@/lib/firebase';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -60,6 +60,7 @@ export interface ScraperResultEvent {
     price: number;
     screenshot: string | null;
     aiFixed: boolean;
+    validation?: ScrapeValidationResult;
     fixedActions?: ScraperAction[];
     message?: string;
     error?: string;
@@ -74,7 +75,7 @@ export type ScraperEvent =
  * Returns a cancel function.
  */
 export function testScraperStream(
-    url: string,
+    product: Product,
     actions: ScraperAction[],
     cookieBannerXPaths: string[] | undefined,
     onEvent: (event: ScraperEvent) => void,
@@ -88,7 +89,7 @@ export function testScraperStream(
             const res = await fetch(`${API_URL}/test-scraper`, {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({ url, actions, cookieBannerXPaths }),
+                body: JSON.stringify({ url: product.url, product, actions, cookieBannerXPaths }),
                 signal: controller.signal,
             });
 

@@ -1,4 +1,4 @@
-import type { ProductType } from '@eiwittens/types';
+import type { ProductType, ScrapeTarget } from '@eiwittens/types';
 import { productTypes, productSubtypes } from '@eiwittens/types';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +14,18 @@ interface BasicInfoCardProps {
 export function BasicInfoCard({ form, setField }: BasicInfoCardProps) {
     const currentType = form.type as ProductType;
     const subtypesForType = productSubtypes[currentType] ?? [];
+    const scrapeTarget = (form.scrapeTarget ?? {}) as ScrapeTarget;
+
+    const updateScrapeTarget = (patch: Partial<ScrapeTarget>) => {
+        const next = { ...scrapeTarget, ...patch };
+        const hasValue = Boolean(
+            next.requiredTexts?.length
+            || next.preferredOptionTexts?.length
+            || next.rejectTexts?.length
+            || next.notes?.trim(),
+        );
+        setField('scrapeTarget', hasValue ? next : undefined);
+    };
 
     return (
         <Card>
@@ -89,7 +101,51 @@ export function BasicInfoCard({ form, setField }: BasicInfoCardProps) {
                     <Label>Trustpilot URL</Label>
                     <Input value={(form.trustpilot_url as string) ?? ''} onChange={(e) => setField('trustpilot_url', e.target.value || undefined)} />
                 </div>
+                <div className="space-y-3 border-t pt-4">
+                    <div className="space-y-2">
+                        <Label>Required Scrape Texts</Label>
+                        <Input
+                            value={arrayToText(scrapeTarget.requiredTexts)}
+                            onChange={(e) => updateScrapeTarget({ requiredTexts: textToArray(e.target.value) })}
+                            placeholder="2kg, Vanilla"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Preferred Option Texts</Label>
+                        <Input
+                            value={arrayToText(scrapeTarget.preferredOptionTexts)}
+                            onChange={(e) => updateScrapeTarget({ preferredOptionTexts: textToArray(e.target.value) })}
+                            placeholder="2000 g, Vanille"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Rejected Scrape Texts</Label>
+                        <Input
+                            value={arrayToText(scrapeTarget.rejectTexts)}
+                            onChange={(e) => updateScrapeTarget({ rejectTexts: textToArray(e.target.value) })}
+                            placeholder="500g, sample"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Scrape Notes</Label>
+                        <Input
+                            value={scrapeTarget.notes ?? ''}
+                            onChange={(e) => updateScrapeTarget({ notes: e.target.value || undefined })}
+                        />
+                    </div>
+                </div>
             </CardContent>
         </Card>
     );
+}
+
+function arrayToText(value: string[] | undefined): string {
+    return value?.join(', ') ?? '';
+}
+
+function textToArray(value: string): string[] {
+    return value
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
 }

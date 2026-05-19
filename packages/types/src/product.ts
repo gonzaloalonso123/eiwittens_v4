@@ -1,5 +1,5 @@
 import type { ProductType, DiscountType } from './enums.js';
-import type { ScraperAction } from './scraper.js';
+import type { ScraperAction, ScrapeTarget } from './scraper.js';
 
 export interface Ingredient {
     name: string;
@@ -26,6 +26,7 @@ export interface Product {
     // Scraper config
     scraper: ScraperAction[];
     cookieBannerXPaths?: string[];
+    scrapeTarget?: ScrapeTarget;
 
     // Pricing
     price: number;

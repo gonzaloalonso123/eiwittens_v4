@@ -33,3 +33,23 @@ export interface WaitAction extends BaseAction {
 }
 
 export type ScraperAction = ClickAction | SelectOptionAction | SelectAction | WaitAction;
+
+export interface ScrapeTarget {
+    requiredTexts?: string[];
+    preferredOptionTexts?: string[];
+    rejectTexts?: string[];
+    notes?: string;
+}
+
+export type ScrapeConfidence = 'high' | 'medium' | 'low';
+
+export interface ScrapeValidationResult {
+    ok: boolean;
+    confidence: ScrapeConfidence;
+    score: number;
+    reasons: string[];
+    evidence: string[];
+    missingRequiredTexts: string[];
+    rejectedTexts: string[];
+    price?: number;
+}

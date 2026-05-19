@@ -2,10 +2,12 @@ import type { Page } from 'playwright';
 import type { ScraperAction } from '@eiwittens/types';
 import { ActionType } from '@eiwittens/types';
 import { locate } from '../lib/utils.js';
+import { normalizeText } from './validation.js';
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_RETRIES = 3;
 const RETRY_BACKOFF_MS = 1000;
+const POST_INTERACTION_SETTLE_MS = 300;
 
 const DEFAULT_COOKIE_BANNERS: Array<{ selectorType: string; value: string }> = [
     { selectorType: 'xpath', value: "//button[contains(text(), 'Accept')]" },
@@ -104,13 +106,40 @@ async function executeAction(
             const el = locate(page, action.selectorType, action.selectorValue).first();
             await el.waitFor({ state: 'visible', timeout });
             await el.click();
+            await page.waitForTimeout(POST_INTERACTION_SETTLE_MS);
             return currentPrice;
         }
 
         case ActionType.SelectOption: {
             const el = locate(page, action.selectorType, action.selectorValue).first();
             await el.waitFor({ state: 'visible', timeout });
-            await el.selectOption({ label: action.optionText });
+            try {
+                await el.selectOption({ label: action.optionText });
+            } catch (err) {
+                const optionValue = await el.evaluate((node, expectedText) => {
+                    if (!(node instanceof HTMLSelectElement)) return null;
+                    const normalize = (value: string): string => value
+                        .normalize('NFKD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    const options = Array.from(node.options);
+                    const exact = options.find((option) => (
+                        normalize(option.label || option.textContent || option.value) === expectedText
+                        || normalize(option.value) === expectedText
+                    ));
+                    const partial = options.find((option) => {
+                        const label = normalize(option.label || option.textContent || option.value);
+                        return label.includes(expectedText) || expectedText.includes(label);
+                    });
+                    return (exact ?? partial)?.value ?? null;
+                }, normalizeText(action.optionText));
+
+                if (!optionValue) throw err;
+                await el.selectOption({ value: optionValue });
+            }
+            await page.waitForTimeout(POST_INTERACTION_SETTLE_MS);
             return currentPrice;
         }
 

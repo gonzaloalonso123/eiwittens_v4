@@ -8,6 +8,14 @@
         "build:types": "pnpm --filter @eiwittens/types build",
         "build:backend": "pnpm --filter eiwittens-backend build",
         "build:frontend": "pnpm --filter eiwittens-frontend build",
-        "migrate": "pnpm --filter eiwittens-backend migrate"
+        "cloud:scrape:describe": "pnpm --filter eiwittens-backend cloud:scrape:describe",
+        "cloud:scrape:logs": "pnpm --filter eiwittens-backend cloud:scrape:logs",
+        "deploy": "pnpm --filter eiwittens-backend deploy",
+        "deploy:backend": "pnpm --filter eiwittens-backend deploy",
+        "migrate": "pnpm --filter eiwittens-backend migrate",
+        "migrate:repair-amount": "pnpm --filter eiwittens-backend migrate:repair-amount",
+        "repair:products": "pnpm --filter eiwittens-backend repair:products",
+        "scrape:local": "pnpm --filter eiwittens-backend scrape:local",
+        "test:products": "pnpm --filter eiwittens-backend test:products"
     }
 }

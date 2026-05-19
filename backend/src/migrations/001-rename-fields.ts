@@ -67,8 +67,13 @@ async function migrate(): Promise<void> {
         // ── Field renames ──────────────────────────────────────────────────
 
         // ammount → amount
-        if ('ammount' in data && !('amount' in data)) {
-            updates['amount'] = data['ammount'];
+        if ('ammount' in data) {
+            const legacyAmount = coercePositiveNumber(data['ammount']);
+            const currentAmount = coercePositiveNumber(data['amount']);
+
+            if (legacyAmount !== undefined && currentAmount === undefined) {
+                updates['amount'] = legacyAmount;
+            }
             deletes.push('ammount');
         }
 
@@ -180,3 +185,9 @@ migrate().catch((err) => {
     console.error('Migration failed:', err);
     process.exit(1);
 });
+
+function coercePositiveNumber(value: unknown): number | undefined {
+    if (value === null || value === undefined || value === '') return undefined;
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : undefined;
+}

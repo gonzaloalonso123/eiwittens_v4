@@ -1,5 +1,5 @@
 import type { ProductType, DiscountType } from './enums.js';
-import type { ScraperAction } from './scraper.js';
+import type { ScraperAction, ScrapeTarget } from './scraper.js';
 export interface Ingredient {
     name: string;
     amount: number;
@@ -20,6 +20,7 @@ export interface Product {
     warning?: boolean;
     scraper: ScraperAction[];
     cookieBannerXPaths?: string[];
+    scrapeTarget?: ScrapeTarget;
     price: number;
     provisional_price?: number | null;
     amount: number;
@@ -43,7 +44,14 @@ export interface Product {
     price_per_100_calories?: number;
     price_per_1000_calories?: number;
     count_clicked?: Array<{
+        date: {
+            seconds: number;
+            nanoseconds: number;
+        };
+    }>;
+    price_history?: Array<{
         date: string;
+        scrapedData: number;
     }>;
 }
 export type ProductUpdate = Partial<Omit<Product, 'id'>>;

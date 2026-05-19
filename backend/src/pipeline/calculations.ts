@@ -1,29 +1,38 @@
 import type { Product } from '@eiwittens/types';
-import { ProductType } from '@eiwittens/types';
 
 export function applyCalculations(products: Product[]): Product[] {
     return products.map(calculateProduct);
 }
 
 function calculateProduct(product: Product): Product {
+    const {
+        price_for_element_gram: _priceForElementGram,
+        price_per_dose: _pricePerDose,
+        price_per_100_calories: _pricePer100Calories,
+        price_per_1000_calories: _pricePer1000Calories,
+        ...baseProduct
+    } = product;
     const updates: Partial<Product> = {};
 
     switch (product.type) {
         case 'proteine':
             if (product.protein_per_100g) {
-                updates.price_for_element_gram = pricePerActiveGram(product, product.protein_per_100g);
+                const price = pricePerActiveGram(product, product.protein_per_100g);
+                if (price !== undefined) updates.price_for_element_gram = price;
             }
             break;
 
         case 'creatine':
             if (product.creatine_per_100g) {
-                updates.price_for_element_gram = pricePerActiveGram(product, product.creatine_per_100g);
+                const price = pricePerActiveGram(product, product.creatine_per_100g);
+                if (price !== undefined) updates.price_for_element_gram = price;
             }
             break;
 
         case 'weight_gainer':
             if (product.protein_per_100g) {
-                updates.price_for_element_gram = pricePerActiveGram(product, product.protein_per_100g);
+                const price = pricePerActiveGram(product, product.protein_per_100g);
+                if (price !== undefined) updates.price_for_element_gram = price;
             }
             if (product.calories_per_100g && product.amount && product.price) {
                 updates.price_per_100_calories = pricePerHundredCalories(product);
@@ -44,11 +53,13 @@ function calculateProduct(product: Product): Product {
             break;
     }
 
-    return { ...product, ...updates };
+    return { ...baseProduct, ...updates };
 }
 
-function pricePerActiveGram(product: Product, elementPer100g: number): number {
+function pricePerActiveGram(product: Product, elementPer100g: number): number | undefined {
+    if (!product.amount || !product.price) return undefined;
     const elementGrams = product.amount * (elementPer100g / 100);
+    if (elementGrams === 0) return undefined;
     return parseFloat(((product.price / elementGrams) * 100).toFixed(2));
 }
 

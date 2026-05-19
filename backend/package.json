@@ -6,11 +6,18 @@
     "scripts": {
         "build": "tsc",
         "start": "node dist/main.js",
+        "start:scrape": "node dist/jobs/scrape.js",
+        "scrape:local": "tsx src/jobs/scrape-local.ts",
+        "repair:products": "tsx src/jobs/repair-products.ts",
+        "test:products": "tsx src/test/product-suite.ts",
         "dev": "tsx src/main.ts",
         "deploy": "./deploy.sh",
         "migrate": "tsx src/migrations/001-rename-fields.ts",
         "migrate:types": "tsx src/migrations/002-coerce-types.ts",
-        "run-scrape-job": "gcloud scheduler jobs run daily-scrape --location europe-west4 --project eiwittens"
+        "migrate:repair-amount": "tsx src/migrations/003-repair-amount-from-ammount.ts",
+        "run-scrape-job": "gcloud run jobs execute daily-scrape-runner --region europe-west4 --project eiwittens --wait",
+        "cloud:scrape:describe": "gcloud run jobs describe daily-scrape-runner --region europe-west4 --project eiwittens",
+        "cloud:scrape:logs": "gcloud logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"daily-scrape-runner\"' --project eiwittens --freshness=2d --limit=200 --format='table(timestamp,severity,textPayload)'"
     },
     "dependencies": {
         "@eiwittens/types": "workspace:*",

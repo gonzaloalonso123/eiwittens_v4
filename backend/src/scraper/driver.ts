@@ -9,7 +9,7 @@ export interface DriverHandle {
     cleanup: () => Promise<void>;
 }
 
-export async function createDriver(): Promise<DriverHandle> {
+function getLaunchOptions(): Parameters<typeof chromium.launch>[0] {
     console.log(`[driver] platform=${process.platform}`);
 
     const launchOptions: Parameters<typeof chromium.launch>[0] = {
@@ -29,16 +29,22 @@ export async function createDriver(): Promise<DriverHandle> {
         console.log(`[driver] Linux detected — using system Chromium at /usr/bin/chromium`);
     }
 
+    return launchOptions;
+}
+
+export async function createBrowser(): Promise<Browser> {
     console.log(`[driver] Starting browser...`);
-    let browser: Browser;
     try {
-        browser = await chromium.launch(launchOptions);
+        const browser = await chromium.launch(getLaunchOptions());
+        console.log(`[driver] Browser started successfully`);
+        return browser;
     } catch (err) {
         console.error(`[driver] Failed to start browser:`, (err as Error).message);
         throw err;
     }
-    console.log(`[driver] Browser started successfully`);
+}
 
+export async function createPage(browser: Browser): Promise<DriverHandle> {
     const context: BrowserContext = await browser.newContext({
         viewport: { width: 1920, height: 1080 },
         userAgent:
@@ -50,10 +56,24 @@ export async function createDriver(): Promise<DriverHandle> {
     const page = await context.newPage();
 
     const cleanup = async (): Promise<void> => {
-        console.log(`[driver] Cleaning up browser`);
-        try { await browser.close(); } catch { /* ignore */ }
+        console.log(`[driver] Cleaning up browser context`);
+        try { await context.close(); } catch { /* ignore */ }
     };
 
     return { page, cleanup };
+}
+
+export async function createDriver(): Promise<DriverHandle> {
+    const browser = await createBrowser();
+    const handle = await createPage(browser);
+
+    return {
+        page: handle.page,
+        cleanup: async () => {
+            await handle.cleanup();
+            console.log(`[driver] Cleaning up browser`);
+            try { await browser.close(); } catch { /* ignore */ }
+        },
+    };
 }
 
