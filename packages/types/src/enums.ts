@@ -23,6 +23,7 @@ export enum DiscountType {
 
 export enum ActionType {
     Click = 'click',
+    ClickByText = 'clickByText',
     Select = 'select',
     SelectOption = 'selectOption',
     Wait = 'wait',

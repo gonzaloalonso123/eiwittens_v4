@@ -21,6 +21,7 @@ export var DiscountType;
 export var ActionType;
 (function (ActionType) {
     ActionType["Click"] = "click";
+    ActionType["ClickByText"] = "clickByText";
     ActionType["Select"] = "select";
     ActionType["SelectOption"] = "selectOption";
     ActionType["Wait"] = "wait";

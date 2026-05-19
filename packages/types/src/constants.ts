@@ -85,6 +85,7 @@ export const discountTypes: ReadonlyArray<{ value: DiscountType; label: string }
 
 export const actionTypes: ReadonlyArray<{ value: ActionType; label: string }> = [
     { value: ActionType.Click, label: 'Click' },
+    { value: ActionType.ClickByText, label: 'Click by text (variant-aware)' },
     { value: ActionType.Select, label: 'Select' },
     { value: ActionType.SelectOption, label: 'Select Option' },
     { value: ActionType.Wait, label: 'Wait' },
