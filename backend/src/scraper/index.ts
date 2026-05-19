@@ -1,6 +1,6 @@
 import { createDriver, createPage } from './driver.js';
 import { dismissCookieBanner, executeActions } from './actions.js';
-import { aiExtractPrice } from './extractor.js';
+import { anthropicExtractPrice as aiExtractPrice } from './extractor-anthropic.js';
 import { extractFreePrice, NoFreeExtractionAvailable, type FreeExtractionMethod } from './free-extractor.js';
 import { takeScreenshot } from './helpers.js';
 import { isHighConfidenceValidation, validateScrapeResult } from './validation.js';
