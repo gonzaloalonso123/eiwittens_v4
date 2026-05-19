@@ -370,7 +370,47 @@ function summarize(matches: MatchResult[], feedSize: number): string {
     return lines.join('\n');
 }
 
+// ── Firestore write (--apply mode) ──────────────────────────────────────────
+
+async function applyMatches(matches: MatchResult[]): Promise<{ updated: number; skipped: number; errors: number }> {
+    const { db } = await import('../db/firebase.js');
+    const collection = db.collection('products');
+
+    let updated = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const m of matches) {
+        if (m.verdict === 'no_match') {
+            skipped++;
+            continue;
+        }
+        if (m.feed_price === undefined || m.feed_price <= 0) {
+            skipped++;
+            continue;
+        }
+
+        try {
+            await collection.doc(m.gg_id).update({
+                price: m.feed_price,
+                out_of_stock: m.feed_in_stock === false,
+                extraction_method: 'feed_awin',
+                // Clear provisional_price since feed is authoritative
+                provisional_price: null,
+            });
+            updated++;
+            console.log(`[awin] ✓ ${m.gg_name.slice(0, 50)} | €${m.gg_price} → €${m.feed_price.toFixed(2)} (${m.verdict})`);
+        } catch (err) {
+            errors++;
+            console.error(`[awin] ✗ ${m.gg_name}: ${(err as Error).message}`);
+        }
+    }
+    return { updated, skipped, errors };
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
+
+const apply = process.argv.includes('--apply');
 
 const feedUrl = process.env.AWIN_FEED_MYPROTEIN_URL;
 if (!feedUrl) {
@@ -410,10 +450,24 @@ const md = summarize(matches, feedRows.length);
 await writeFile(mdPath, md);
 
 console.log('');
-console.log(`[awin] Done. Reports:`);
+console.log(`[awin] Reports written:`);
 console.log(`  JSON: ${jsonPath}`);
 console.log(`  MD:   ${mdPath}`);
 console.log('');
-console.log(md.split('## Match strategy distribution')[0]);
+
+if (!apply) {
+    console.log('[awin] DRY RUN — pass --apply to write feed prices to Firestore');
+    console.log('');
+    console.log(md.split('## Match strategy distribution')[0]);
+} else {
+    if (!process.env.FIREBASE_CREDENTIALS) {
+        console.error('[awin] FIREBASE_CREDENTIALS not set in .env. Cannot apply.');
+        process.exit(1);
+    }
+    console.log('[awin] APPLYING feed prices to Firestore...');
+    const { updated, skipped, errors } = await applyMatches(matches);
+    console.log('');
+    console.log(`[awin] Done. updated=${updated} skipped=${skipped} errors=${errors}`);
+}
 
 process.exit(0);
