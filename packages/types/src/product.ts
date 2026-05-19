@@ -43,6 +43,13 @@ export interface Product {
     // Extraction strategy — defaults to 'playwright' when unset
     extraction_method?: ExtractionMethod;
 
+    /**
+     * When true, the AI fallback will NOT overwrite this product's `scraper`
+     * actions even if it finds a high-confidence replacement selector.
+     * Use to lock in manual configurations against auto-fix.
+     */
+    manual_lock?: boolean;
+
     // Scraper config
     scraper: ScraperAction[];
     cookieBannerXPaths?: string[];

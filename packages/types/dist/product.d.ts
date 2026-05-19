@@ -29,6 +29,12 @@ export interface Product {
     only_in_store: boolean;
     warning?: boolean;
     extraction_method?: ExtractionMethod;
+    /**
+     * When true, the AI fallback will NOT overwrite this product's `scraper`
+     * actions even if it finds a high-confidence replacement selector.
+     * Use to lock in manual configurations against auto-fix.
+     */
+    manual_lock?: boolean;
     scraper: ScraperAction[];
     cookieBannerXPaths?: string[];
     scrapeTarget?: ScrapeTarget;

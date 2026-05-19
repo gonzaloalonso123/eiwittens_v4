@@ -75,7 +75,7 @@ router.put('/products/:id', requireAuth, asyncHandler(async (req, res) => {
     const allowed = [
         'name', 'store', 'url', 'image', 'type', 'subtypes',
         'enabled', 'scrape_enabled', 'out_of_stock', 'enabled_top10', 'only_in_store',
-        'extraction_method',
+        'extraction_method', 'manual_lock',
         'scraper', 'cookieBannerXPaths', 'scrapeTarget',
         'amount', 'dose',
         'protein_per_100g', 'creatine_per_100g', 'sugar_per_100g', 'calories_per_100g',

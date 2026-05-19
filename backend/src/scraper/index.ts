@@ -331,10 +331,15 @@ async function scrapeProductOnPage(
                 aiUsed = true;
                 console.log(`[scraper] AI fallback succeeded for "${product.name}" — price=${price}`);
 
-                // Persist only when the discovered selector survives a clean replay validation.
+                // Persist only when the discovered selector survives a clean replay validation,
+                // AND the product isn't manually locked against AI overwrite.
                 if (aiResult.fixedScraper.length > 0 && options.persistFixedScraper !== false) {
-                    await updateProduct(product.id, { scraper: fixedActions });
-                    console.log(`[scraper] Scraper auto-fixed for "${product.name}" — high-confidence selector persisted`);
+                    if (product.manual_lock) {
+                        console.log(`[scraper] AI found high-confidence fix for "${product.name}" but manual_lock=true — skipping persist`);
+                    } else {
+                        await updateProduct(product.id, { scraper: fixedActions });
+                        console.log(`[scraper] Scraper auto-fixed for "${product.name}" — high-confidence selector persisted`);
+                    }
                 }
             }
         } catch (aiError) {
