@@ -128,7 +128,15 @@ async function playwrightFetch(url: string, browser: Browser): Promise<FetchOutc
     });
     try {
         const page = await context.newPage();
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PLAYWRIGHT_TIMEOUT_MS });
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PLAYWRIGHT_TIMEOUT_MS });
+        const status = response?.status() ?? 0;
+        // Reject 4xx/5xx — many stores' error pages still serve full HTML with
+        // recommended-product JSON-LD blocks which would mislead our parser.
+        // Allow 3xx because page.goto follows redirects automatically and surfaces
+        // the final response.
+        if (status >= 400) {
+            throw new Error(`HTTP ${status} for ${url} (via Playwright)`);
+        }
         const finalUrl = page.url();
         const html = await page.content();
         return { html, finalUrl, fetchMethod: 'playwright' };
