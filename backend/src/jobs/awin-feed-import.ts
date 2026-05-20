@@ -62,7 +62,7 @@ interface MatchResult {
     gg_price: number;
     gg_amount?: number;
 
-    match_strategy: 'merchant_product_id' | 'aw_product_id' | 'url_substring' | 'name_fuzzy' | 'none';
+    match_strategy: 'variation_exact' | 'merchant_product_id' | 'aw_product_id' | 'url_substring' | 'name_fuzzy' | 'none';
     feed_row?: FeedRow;
     feed_price?: number;
     feed_rrp?: number;
@@ -145,7 +145,12 @@ async function fetchGgMyProteinProducts(): Promise<GgProduct[]> {
     const res = await fetch(`${BACKEND_API}/products?type=MINIMAL`);
     if (!res.ok) throw new Error(`GG API failed: ${res.status}`);
     const all = await res.json() as GgProduct[];
-    return all.filter((p) => p.store === 'MyProtein' && p.enabled && p.scrape_enabled);
+    // Include both scrape_enabled=true (currently in daily scrape) and
+    // scrape_enabled=false (hard-priced workarounds). The Awin feed wants to
+    // own MyProtein entirely, so the workarounds are the primary beneficiaries.
+    // Filtered downstream by --safe-only flag if user only wants high-confidence
+    // (variation_exact) writes.
+    return all.filter((p) => p.store === 'MyProtein' && p.enabled);
 }
 
 // ── Matching strategies ─────────────────────────────────────────────────────
@@ -159,6 +164,24 @@ function extractMyProteinProductIdFromUrl(url: string): string | null {
         const myproteinSlice = decoded.split('myprotein.com')[1];
         if (!myproteinSlice) return null;
         const m = myproteinSlice.match(/\/(\d{4,12})\b/);
+        return m?.[1] ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Extract the SKU-level variant ID from a GG MyProtein URL. MyProtein product
+ * URLs carry both a master product ID in the path (`/p/<slug>/<masterId>/`)
+ * and a variant ID in the `variation=` query param. The variant ID is what
+ * matches Awin's `merchant_product_id` exactly. Earlier code matched on the
+ * master ID and then guessed the variant from size strings, which produced
+ * incorrect 30-50% drifts when the size heuristic picked the wrong variant.
+ */
+function extractMyProteinVariationFromUrl(url: string): string | null {
+    try {
+        const decoded = decodeURIComponent(url);
+        const m = decoded.match(/[?&]variation=(\d{4,12})/);
         return m?.[1] ?? null;
     } catch {
         return null;
@@ -223,9 +246,16 @@ function matchProduct(product: GgProduct, feedById: Map<string, FeedRow>, feedBy
 
     const sizeStrings = amountToSizeStrings(product.amount);
     const masterId = extractMyProteinProductIdFromUrl(product.url);
+    const variationId = extractMyProteinVariationFromUrl(product.url);
 
-    // 1. Best path: master product ID + size match → unique variant
-    if (masterId && feedRowsByMaster.has(masterId)) {
+    // 0. Best path: explicit variant ID from URL → exact merchant_product_id match
+    if (variationId && feedById.has(variationId)) {
+        result.feed_row = feedById.get(variationId);
+        result.match_strategy = 'variation_exact';
+    }
+
+    // 1. Master product ID + size match → unique variant (less precise; only if no variant_exact)
+    if (!result.feed_row && masterId && feedRowsByMaster.has(masterId)) {
         const candidates = feedRowsByMaster.get(masterId)!;
         if (sizeStrings.length > 0) {
             const sized = candidates.filter((r) => feedNameMatchesSize(r.product_name, sizeStrings));
@@ -372,7 +402,10 @@ function summarize(matches: MatchResult[], feedSize: number): string {
 
 // ── Firestore write (--apply mode) ──────────────────────────────────────────
 
-async function applyMatches(matches: MatchResult[]): Promise<{ updated: number; skipped: number; errors: number }> {
+async function applyMatches(
+    matches: MatchResult[],
+    options: { safeOnly: boolean },
+): Promise<{ updated: number; skipped: number; errors: number }> {
     const { db } = await import('../db/firebase.js');
     const collection = db.collection('products');
 
@@ -389,17 +422,28 @@ async function applyMatches(matches: MatchResult[]): Promise<{ updated: number; 
             skipped++;
             continue;
         }
+        // In --safe-only mode, only persist the high-confidence variation_exact
+        // matches. The other strategies (master+size guessing, url_substring)
+        // have a known failure mode of picking the wrong variant.
+        if (options.safeOnly && m.match_strategy !== 'variation_exact') {
+            console.log(`[awin] - skip ${m.gg_name.slice(0, 50)} (strategy=${m.match_strategy}, needs --no-safe-only)`);
+            skipped++;
+            continue;
+        }
 
         try {
             await collection.doc(m.gg_id).update({
                 price: m.feed_price,
                 out_of_stock: m.feed_in_stock === false,
                 extraction_method: 'feed_awin',
+                // Hard-priced products may have been disabled from the daily scrape.
+                // Re-enable them so the feed sync's pipeline includes them.
+                scrape_enabled: true,
                 // Clear provisional_price since feed is authoritative
                 provisional_price: null,
             });
             updated++;
-            console.log(`[awin] ✓ ${m.gg_name.slice(0, 50)} | €${m.gg_price} → €${m.feed_price.toFixed(2)} (${m.verdict})`);
+            console.log(`[awin] ✓ ${m.gg_name.slice(0, 50)} | €${m.gg_price} → €${m.feed_price.toFixed(2)} (${m.match_strategy})`);
         } catch (err) {
             errors++;
             console.error(`[awin] ✗ ${m.gg_name}: ${(err as Error).message}`);
@@ -411,6 +455,9 @@ async function applyMatches(matches: MatchResult[]): Promise<{ updated: number; 
 // ── Main ────────────────────────────────────────────────────────────────────
 
 const apply = process.argv.includes('--apply');
+// Safe-only mode: write only variation_exact matches (skip master+size guesses).
+// Default: ON when --apply (safety). Can be turned off with --no-safe-only.
+const safeOnly = !process.argv.includes('--no-safe-only');
 
 const feedUrl = process.env.AWIN_FEED_MYPROTEIN_URL;
 if (!feedUrl) {
@@ -465,7 +512,8 @@ if (!apply) {
         process.exit(1);
     }
     console.log('[awin] APPLYING feed prices to Firestore...');
-    const { updated, skipped, errors } = await applyMatches(matches);
+    console.log(`[awin] Safe-only mode: ${safeOnly ? 'ON (variation_exact only)' : 'OFF (all strategies)'}`);
+    const { updated, skipped, errors } = await applyMatches(matches, { safeOnly });
     console.log('');
     console.log(`[awin] Done. updated=${updated} skipped=${skipped} errors=${errors}`);
 }
