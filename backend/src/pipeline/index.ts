@@ -247,12 +247,16 @@ function selectProductsForScrape(products: Product[]): Product[] {
     let selected = products;
 
     // Feed-managed products have their prices updated by a separate feed-import job.
-    // Exclude them from the scrape pipeline entirely.
+    // Vision-only products are refreshed by the monthly verify-with-ai job (too
+    // expensive for daily). Exclude both from the scrape pipeline entirely.
     const beforeFeedFilter = selected.length;
-    selected = selected.filter((product) => product.extraction_method !== 'feed_awin');
+    selected = selected.filter((product) => (
+        product.extraction_method !== 'feed_awin'
+        && product.extraction_method !== 'vision_only'
+    ));
     const feedExcluded = beforeFeedFilter - selected.length;
     if (feedExcluded > 0) {
-        console.log(`[pipeline] Excluded ${feedExcluded} feed-managed products from scrape`);
+        console.log(`[pipeline] Excluded ${feedExcluded} feed/vision-managed products from scrape`);
     }
 
     if (config.SCRAPE_PRODUCT_ID) {

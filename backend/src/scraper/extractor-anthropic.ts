@@ -15,9 +15,34 @@ function getClient(): Anthropic {
 }
 
 const MODEL = 'claude-haiku-4-5-20251001';
+const VISION_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_HTML_CHARS = 40_000;
 const MAX_TOKENS = 800;
 const SELECTOR_TIMEOUT_MS = 5_000;
+const RETRY_DELAYS_MS = [2_000, 4_000, 8_000];
+
+async function sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Wrap an Anthropic request with retry/backoff on 429 + 5xx. */
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastError = err;
+            const status = (err as { status?: number }).status ?? 0;
+            const isRetryable = status === 429 || (status >= 500 && status < 600);
+            if (!isRetryable || attempt === RETRY_DELAYS_MS.length) throw err;
+            const delay = RETRY_DELAYS_MS[attempt];
+            console.warn(`[anthropic-extractor] ${label} attempt ${attempt + 1} got ${status}, sleeping ${delay}ms`);
+            await sleep(delay);
+        }
+    }
+    throw lastError;
+}
 
 const SYSTEM_PROMPT = `You are an expert web scraper for Dutch e-commerce supplement shops. Your task is to locate the main product price on a page and return selectors that will remain stable over time.
 
@@ -48,7 +73,7 @@ export async function anthropicExtractPrice(page: Page, url: string): Promise<An
     const rawHtml: string = await page.evaluate(() => document.documentElement.outerHTML);
     const cleanedHtml = truncateHtml(stripHtml(rawHtml), MAX_HTML_CHARS);
 
-    const response = await getClient().messages.create({
+    const response = await withRetry('html-extract', () => getClient().messages.create({
         model: MODEL,
         max_tokens: MAX_TOKENS,
         system: SYSTEM_PROMPT,
@@ -71,7 +96,7 @@ HTML:
 ${cleanedHtml}`,
             },
         ],
-    });
+    }));
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
@@ -138,6 +163,149 @@ ${cleanedHtml}`,
     }
 
     throw new Error(`Anthropic could not extract a valid price (raw="${parsed.price}", tried ${candidatesTried} selectors)`);
+}
+
+// ── Vision fallback (Layer 3) ────────────────────────────────────────────────
+//
+// When HTML extraction fails or returns implausible values, we fall back to
+// asking Claude to read the price visually from a screenshot. This catches:
+//   - Heavily JavaScript-rendered prices that don't appear in static HTML
+//   - Prices embedded in <canvas> or images
+//   - Pages where HTML parsing hallucinates SKUs/IDs as prices
+//
+// Important caveat: vision can read the price but generally cannot derive a
+// stable selector. Products that succeed *only* via vision should be marked
+// with `extraction_method: 'vision_only'` so the daily scrape skips them; the
+// monthly verify-with-ai job is responsible for refreshing their price.
+
+const VISION_SYSTEM_PROMPT = `You are an expert at reading product prices from web page screenshots of Dutch e-commerce supplement shops.
+
+Rules:
+- Return ONLY the price the customer pays today (the sale price, not the strikethrough/was price).
+- Currency is EUR (€). If you see "€19,99" or "19,99 EUR" return 19.99 as a number.
+- If multiple variants/sizes are visible, return the price of the variant that appears SELECTED, or the default/first if none is selected.
+- Ignore "from €X", "vanaf €X", "starting at €X" labels — find the actual displayed price.
+- If you cannot see a clear price for a single product on this page, return null.
+
+Return ONLY valid JSON, no markdown:
+{ "price": <number or null>, "reasoning": "<short explanation>" }`;
+
+export interface AnthropicVisionResult {
+    price: number;
+    reasoning: string;
+}
+
+/**
+ * Read the product's price visually from a viewport screenshot of the current page.
+ * Returns price > 0 on success; throws on extraction failure.
+ *
+ * Caller should ensure the page is already navigated + cookie-banner-dismissed.
+ */
+export async function anthropicExtractPriceFromImage(page: Page, url: string): Promise<AnthropicVisionResult> {
+    // Capture viewport — full-page screenshots tend to push the price below the
+    // model's effective resolution window. Viewport (above the fold) is usually
+    // where the price lives on supplement product pages.
+    const buffer = await page.screenshot({ type: 'jpeg', quality: 80, fullPage: false });
+    const base64 = buffer.toString('base64');
+
+    const response = await withRetry('vision-extract', () => getClient().messages.create({
+        model: VISION_MODEL,
+        max_tokens: 300,
+        system: VISION_SYSTEM_PROMPT,
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    {
+                        type: 'image',
+                        source: { type: 'base64', media_type: 'image/jpeg', data: base64 },
+                    },
+                    {
+                        type: 'text',
+                        text: `URL: ${url}\n\nExtract the current product price.`,
+                    },
+                ],
+            },
+        ],
+    }));
+
+    const textBlock = response.content.find((b) => b.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+        throw new Error('Vision returned no text content');
+    }
+    const text = textBlock.text.trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error(`Vision returned non-JSON: ${text.slice(0, 200)}`);
+    const parsed = JSON.parse(jsonMatch[0]) as { price: number | null; reasoning?: string };
+
+    if (parsed.price === null || typeof parsed.price !== 'number' || !Number.isFinite(parsed.price) || parsed.price <= 0) {
+        throw new Error(`Vision did not return a usable price (raw=${JSON.stringify(parsed)})`);
+    }
+
+    return { price: parsed.price, reasoning: parsed.reasoning ?? '' };
+}
+
+// ── Vision-driven variant selection discovery ────────────────────────────────
+//
+// For multi-variant product pages where Playwright cannot derive the right
+// "click this size button" action automatically, ask Claude vision to look at
+// the page and identify the exact button text needed for a target size.
+// Returns enough info to assemble a [ClickByText, Wait, Select] scraper.
+
+const VARIANT_DISCOVERY_PROMPT = `You are a web scraping assistant. Look at this product page screenshot.
+
+The user needs the price for a specific size/variant of this product. Examine
+the variant selector elements (size buttons, dropdowns, radio options, swatches).
+Identify whether the target variant is already displayed or whether a button
+must be clicked.
+
+Return ONLY valid JSON, no markdown, no preamble. Schema:
+{
+  "already_displayed": <bool>,          // Is the target size's price currently shown?
+  "click_text": <string|null>,          // Exact visible text of the button/option to click for the target size (e.g. "5kg", "4 KG", "2,5kg"). Null if no click is needed or none was found.
+  "displayed_price": <number|null>,     // The price as currently shown for the target variant, if visible.
+  "reasoning": <string>                 // Short explanation.
+}`;
+
+export interface VariantDiscoveryResult {
+    already_displayed: boolean;
+    click_text: string | null;
+    displayed_price: number | null;
+    reasoning: string;
+}
+
+export async function anthropicDiscoverVariantClick(page: Page, targetSizeLabel: string): Promise<VariantDiscoveryResult> {
+    const buffer = await page.screenshot({ type: 'jpeg', quality: 80, fullPage: false });
+    const base64 = buffer.toString('base64');
+
+    const response = await withRetry('variant-discovery', () => getClient().messages.create({
+        model: VISION_MODEL,
+        max_tokens: 400,
+        system: VARIANT_DISCOVERY_PROMPT,
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+                    { type: 'text', text: `Target size: ${targetSizeLabel}\n\nIdentify the click target for this variant.` },
+                ],
+            },
+        ],
+    }));
+
+    const textBlock = response.content.find((b) => b.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') throw new Error('Variant discovery returned no text');
+    const text = textBlock.text.trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error(`Variant discovery returned non-JSON: ${text.slice(0, 200)}`);
+
+    const parsed = JSON.parse(jsonMatch[0]) as Partial<VariantDiscoveryResult>;
+    return {
+        already_displayed: parsed.already_displayed ?? false,
+        click_text: parsed.click_text ?? null,
+        displayed_price: typeof parsed.displayed_price === 'number' ? parsed.displayed_price : null,
+        reasoning: parsed.reasoning ?? '',
+    };
 }
 
 async function findSelectorForPrice(

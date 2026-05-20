@@ -10,6 +10,20 @@ import type { Product, ScrapeValidationResult, ScraperAction, ExtractionMethod }
 import { ActionType } from '@eiwittens/types';
 import type { Browser, Page } from 'playwright';
 
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/**
+ * After this many consecutive AI fallbacks (i.e. the XPath has failed and AI
+ * has had to step in N days in a row), the product is auto-promoted to
+ * `extraction_method: 'vision_only'`. That removes it from the daily scrape
+ * (which has been burning AI calls) and hands off to the monthly verify-with-ai
+ * job which uses vision to refresh price.
+ *
+ * Tuned conservatively: a product needs to be unstable on 3 consecutive
+ * daily runs (≥3 days) before we give up on its XPath.
+ */
+const AI_FALLBACK_PROMOTION_THRESHOLD = 3;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ScrapeResult {
@@ -337,8 +351,26 @@ async function scrapeProductOnPage(
                     if (product.manual_lock) {
                         console.log(`[scraper] AI found high-confidence fix for "${product.name}" but manual_lock=true — skipping persist`);
                     } else {
-                        await updateProduct(product.id, { scraper: fixedActions });
-                        console.log(`[scraper] Scraper auto-fixed for "${product.name}" — high-confidence selector persisted`);
+                        const prevCount = product.consecutive_ai_fallbacks ?? 0;
+                        const newCount = prevCount + 1;
+                        if (newCount >= AI_FALLBACK_PROMOTION_THRESHOLD) {
+                            // Site is unstable for XPath-based extraction. Stop burning AI
+                            // calls daily; let the monthly verify-with-ai job own this one.
+                            await updateProduct(product.id, {
+                                consecutive_ai_fallbacks: newCount,
+                                extraction_method: 'vision_only',
+                                warning: true,
+                            });
+                            console.warn(
+                                `[scraper] Promoted "${product.name}" to vision_only after ${newCount} consecutive AI fallbacks — daily will skip it from now on`,
+                            );
+                        } else {
+                            await updateProduct(product.id, {
+                                scraper: fixedActions,
+                                consecutive_ai_fallbacks: newCount,
+                            });
+                            console.log(`[scraper] Scraper auto-fixed for "${product.name}" — high-confidence selector persisted (fallback #${newCount})`);
+                        }
                     }
                 }
             }
@@ -347,6 +379,17 @@ async function scrapeProductOnPage(
                 `[scraper] AI fallback also failed for "${product.name}":`,
                 (aiError as Error).message,
             );
+        }
+    }
+
+    // Reset the AI-fallback counter when the XPath did its job on its own.
+    // This lets a recovered product get back to ≤3 budget after a streak.
+    if (!aiUsed && (product.consecutive_ai_fallbacks ?? 0) > 0 && options.persistFixedScraper !== false) {
+        try {
+            await updateProduct(product.id, { consecutive_ai_fallbacks: 0 });
+            console.log(`[scraper] Reset AI fallback counter for "${product.name}"`);
+        } catch (err) {
+            console.warn(`[scraper] Counter reset failed for "${product.name}":`, (err as Error).message);
         }
     }
 
