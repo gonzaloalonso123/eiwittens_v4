@@ -17,4 +17,4 @@ export type {
 } from './scraper.js';
 
 // Product types
-export type { Product, ProductUpdate, ProductCreate, Ingredient } from './product.js';
+export type { Product, ProductUpdate, ProductCreate, Ingredient, ExtractionMethod } from './product.js';

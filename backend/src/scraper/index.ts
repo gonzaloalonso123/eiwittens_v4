@@ -1,13 +1,28 @@
 import { createDriver, createPage } from './driver.js';
 import { dismissCookieBanner, executeActions } from './actions.js';
-import { aiExtractPrice } from './extractor.js';
+import { anthropicExtractPrice as aiExtractPrice } from './extractor-anthropic.js';
+import { extractFreePrice, NoFreeExtractionAvailable, type FreeExtractionMethod } from './free-extractor.js';
 import { takeScreenshot } from './helpers.js';
 import { isHighConfidenceValidation, validateScrapeResult } from './validation.js';
 import { cleanPrice } from '../lib/utils.js';
 import { updateProduct } from '../db/products.js';
-import type { Product, ScrapeValidationResult, ScraperAction } from '@eiwittens/types';
+import type { Product, ScrapeValidationResult, ScraperAction, ExtractionMethod } from '@eiwittens/types';
 import { ActionType } from '@eiwittens/types';
-import type { Browser } from 'playwright';
+import type { Browser, Page } from 'playwright';
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/**
+ * After this many consecutive AI fallbacks (i.e. the XPath has failed and AI
+ * has had to step in N days in a row), the product is auto-promoted to
+ * `extraction_method: 'vision_only'`. That removes it from the daily scrape
+ * (which has been burning AI calls) and hands off to the monthly verify-with-ai
+ * job which uses vision to refresh price.
+ *
+ * Tuned conservatively: a product needs to be unstable on 3 consecutive
+ * daily runs (≥3 days) before we give up on its XPath.
+ */
+const AI_FALLBACK_PROMOTION_THRESHOLD = 3;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -235,6 +250,14 @@ export async function scrapeProductWithBrowser(
     }
 }
 
+// Mapping from product.extraction_method to the Free Extractor's internal method
+const FREE_METHOD_MAP: Record<string, FreeExtractionMethod> = {
+    free_jsonld: 'jsonld',
+    free_shopify: 'shopify_json',
+    free_og: 'og',
+    free_microdata: 'microdata',
+};
+
 async function scrapeProductOnPage(
     product: Product,
     page: import('playwright').Page,
@@ -244,6 +267,36 @@ async function scrapeProductOnPage(
     let aiUsed = false;
     let validation: ScrapeValidationResult | undefined;
 
+    const method: ExtractionMethod = product.extraction_method ?? 'playwright';
+
+    // ── Layer 1: Feed-managed products — price comes from feed import job, no scrape ──
+    if (method === 'feed_awin') {
+        console.log(`[scraper] "${product.name}" is feed_awin — skipping scrape (price managed by feed import)`);
+        return { price: product.price, aiUsed: false, validation: undefined };
+    }
+
+    // ── Layer 0: Free Extractor for products flagged with a free_* extraction method ──
+    if (method.startsWith('free_')) {
+        try {
+            const preferMethod = FREE_METHOD_MAP[method];
+            const browser = page.context().browser() ?? undefined;
+            const free = await extractFreePrice(product.url, {
+                preferMethod,
+                playwrightBrowser: browser,
+                amountGrams: product.amount,
+            });
+            price = free.price;
+            validation = await validateScrapeResult(page, product, price);
+            console.log(`[scraper] Layer 0 (${method}) succeeded for "${product.name}" — price=${price} via ${free.method}/${free.fetch_method}`);
+            return { price, aiUsed: false, validation };
+        } catch (err) {
+            const msg = (err as Error).message;
+            console.warn(`[scraper] Layer 0 (${method}) failed for "${product.name}": ${msg}. Falling back to Playwright + XPath.`);
+            // Fall through to Playwright pipeline below
+        }
+    }
+
+    // ── Layer 1/2: existing Playwright + XPath flow ──
     console.log(`[scraper] Navigating to ${product.url}`);
     await page.goto(product.url, { waitUntil: 'domcontentloaded' });
 
@@ -292,10 +345,33 @@ async function scrapeProductOnPage(
                 aiUsed = true;
                 console.log(`[scraper] AI fallback succeeded for "${product.name}" — price=${price}`);
 
-                // Persist only when the discovered selector survives a clean replay validation.
+                // Persist only when the discovered selector survives a clean replay validation,
+                // AND the product isn't manually locked against AI overwrite.
                 if (aiResult.fixedScraper.length > 0 && options.persistFixedScraper !== false) {
-                    await updateProduct(product.id, { scraper: fixedActions });
-                    console.log(`[scraper] Scraper auto-fixed for "${product.name}" — high-confidence selector persisted`);
+                    if (product.manual_lock) {
+                        console.log(`[scraper] AI found high-confidence fix for "${product.name}" but manual_lock=true — skipping persist`);
+                    } else {
+                        const prevCount = product.consecutive_ai_fallbacks ?? 0;
+                        const newCount = prevCount + 1;
+                        if (newCount >= AI_FALLBACK_PROMOTION_THRESHOLD) {
+                            // Site is unstable for XPath-based extraction. Stop burning AI
+                            // calls daily; let the monthly verify-with-ai job own this one.
+                            await updateProduct(product.id, {
+                                consecutive_ai_fallbacks: newCount,
+                                extraction_method: 'vision_only',
+                                warning: true,
+                            });
+                            console.warn(
+                                `[scraper] Promoted "${product.name}" to vision_only after ${newCount} consecutive AI fallbacks — daily will skip it from now on`,
+                            );
+                        } else {
+                            await updateProduct(product.id, {
+                                scraper: fixedActions,
+                                consecutive_ai_fallbacks: newCount,
+                            });
+                            console.log(`[scraper] Scraper auto-fixed for "${product.name}" — high-confidence selector persisted (fallback #${newCount})`);
+                        }
+                    }
                 }
             }
         } catch (aiError) {
@@ -303,6 +379,17 @@ async function scrapeProductOnPage(
                 `[scraper] AI fallback also failed for "${product.name}":`,
                 (aiError as Error).message,
             );
+        }
+    }
+
+    // Reset the AI-fallback counter when the XPath did its job on its own.
+    // This lets a recovered product get back to ≤3 budget after a streak.
+    if (!aiUsed && (product.consecutive_ai_fallbacks ?? 0) > 0 && options.persistFixedScraper !== false) {
+        try {
+            await updateProduct(product.id, { consecutive_ai_fallbacks: 0 });
+            console.log(`[scraper] Reset AI fallback counter for "${product.name}"`);
+        } catch (err) {
+            console.warn(`[scraper] Counter reset failed for "${product.name}":`, (err as Error).message);
         }
     }
 

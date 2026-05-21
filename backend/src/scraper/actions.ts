@@ -95,6 +95,8 @@ async function executeWithRetry(
     throw lastError;
 }
 
+const DEFAULT_CLICK_BY_TEXT_SCOPE = 'button, a, label, [role="button"], [role="radio"], [role="option"], input[type="radio"]';
+
 async function executeAction(
     page: Page,
     action: ScraperAction,
@@ -108,6 +110,32 @@ async function executeAction(
             await el.click();
             await page.waitForTimeout(POST_INTERACTION_SETTLE_MS);
             return currentPrice;
+        }
+
+        case ActionType.ClickByText: {
+            // Whitespace-insensitive normalization so "1 kg" / "1kg" / "1KG" all match.
+            const tighten = (s: string): string => normalizeText(s).replace(/\s+/g, '');
+            const needle = tighten(action.text);
+            if (!needle) throw new Error('ClickByText: empty text');
+            const scope = action.scopeSelector ?? DEFAULT_CLICK_BY_TEXT_SCOPE;
+            const candidates = await page.locator(scope).all();
+            for (const el of candidates) {
+                const text = await el.innerText({ timeout: 1000 }).catch(() => '');
+                const ariaLabel = await el.getAttribute('aria-label').catch(() => null);
+                const value = await el.getAttribute('value').catch(() => null);
+                const haystack = tighten([text, ariaLabel, value].filter(Boolean).join(' '));
+                if (haystack.includes(needle)) {
+                    try {
+                        await el.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => undefined);
+                        await el.click({ timeout });
+                        await page.waitForTimeout(POST_INTERACTION_SETTLE_MS);
+                        return currentPrice;
+                    } catch {
+                        // try next match
+                    }
+                }
+            }
+            throw new Error(`ClickByText: no clickable element matched text "${action.text}" within scope "${scope}"`);
         }
 
         case ActionType.SelectOption: {

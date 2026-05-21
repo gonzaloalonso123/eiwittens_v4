@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ProductDetailHeader } from '@/components/product-detail/product-detail-header';
 import { BasicInfoCard } from '@/components/product-detail/basic-info-card';
 import { TogglesCard } from '@/components/product-detail/toggles-card';
+import { ExtractionCard } from '@/components/product-detail/extraction-card';
 import { NutritionCard } from '@/components/product-detail/nutrition-card';
 import { IngredientsCard } from '@/components/product-detail/ingredients-card';
 import { PricingCard } from '@/components/product-detail/pricing-card';
@@ -41,7 +42,10 @@ export function ProductDetailPage() {
                 <TabsContent value="basic">
                     <div className="grid gap-6 md:grid-cols-2">
                         <BasicInfoCard form={form} setField={setField} />
-                        <TogglesCard form={form} setField={setField} />
+                        <div className="space-y-6">
+                            <TogglesCard form={form} setField={setField} />
+                            <ExtractionCard form={form} setField={setField} />
+                        </div>
                     </div>
                 </TabsContent>
 

@@ -15,6 +15,7 @@ export declare enum DiscountType {
 }
 export declare enum ActionType {
     Click = "click",
+    ClickByText = "clickByText",
     Select = "select",
     SelectOption = "selectOption",
     Wait = "wait"

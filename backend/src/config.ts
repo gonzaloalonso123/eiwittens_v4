@@ -7,7 +7,10 @@ configDotenv();
 const envSchema = z.object({
     PORT: z.coerce.number().default(8080),
     FIREBASE_CREDENTIALS: z.string().min(1, 'FIREBASE_CREDENTIALS (base64 service account JSON) is required'),
-    OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
+    ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required (used by Claude Haiku 4.5 AI fallback)'),
+    // Legacy — extractor migrated to Anthropic Haiku 4.5. Kept optional during transition.
+    OPENAI_API_KEY: z.string().optional(),
+    AWIN_FEED_MYPROTEIN_URL: z.string().url().optional(),
     GMAIL_USER: z.string().email('GMAIL_USER must be a valid email address'),
     GMAIL_PASSWORD: z.string().min(1, 'GMAIL_PASSWORD is required'),
     SCRAPE_SECRET: z.string().min(1, 'SCRAPE_SECRET (bearer token) is required'),

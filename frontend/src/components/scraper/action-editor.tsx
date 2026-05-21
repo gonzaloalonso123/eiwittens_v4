@@ -37,7 +37,7 @@ export function ActionEditor({ action, idx, onUpdate }: ActionEditorProps) {
                     </Select>
                 </div>
 
-                {action.type !== ActionType.Wait && (
+                {action.type !== ActionType.Wait && action.type !== ActionType.ClickByText && (
                     <>
                         <div className="space-y-2">
                             <Label>Selector Type</Label>
@@ -60,6 +60,34 @@ export function ActionEditor({ action, idx, onUpdate }: ActionEditorProps) {
                                 placeholder="e.g. .price-current or //span[@class='price']"
                                 className="font-mono text-sm"
                             />
+                        </div>
+                    </>
+                )}
+
+                {action.type === ActionType.ClickByText && (
+                    <>
+                        <div className="space-y-2">
+                            <Label>Text to match</Label>
+                            <Input
+                                value={action.text}
+                                onChange={(e) => onUpdate(idx, { text: e.target.value } as Partial<ScraperAction>)}
+                                placeholder="e.g. 1kg, 500g, Naturel"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Case- and whitespace-insensitive substring match. Clicks first button/link/label containing this text.
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Scope selector (optional)</Label>
+                            <Input
+                                value={action.scopeSelector ?? ''}
+                                onChange={(e) => onUpdate(idx, { scopeSelector: e.target.value || undefined } as Partial<ScraperAction>)}
+                                placeholder="Default: buttons, links, labels, role=button|radio|option"
+                                className="font-mono text-sm"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Leave empty to use defaults. Override if you need to scope to a specific area like `.size-selector`.
+                            </p>
                         </div>
                     </>
                 )}

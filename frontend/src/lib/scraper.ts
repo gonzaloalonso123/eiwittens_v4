@@ -9,6 +9,8 @@ export function defaultAction(type: ActionType): ScraperAction {
     switch (type) {
         case ActionType.Click:
             return { id: newActionId(), type: ActionType.Click, selectorType: SelectorType.Css, selectorValue: '' };
+        case ActionType.ClickByText:
+            return { id: newActionId(), type: ActionType.ClickByText, text: '' };
         case ActionType.Select:
             return { id: newActionId(), type: ActionType.Select, selectorType: SelectorType.Css, selectorValue: '' };
         case ActionType.SelectOption:
@@ -22,6 +24,8 @@ export function actionLabel(action: ScraperAction): string {
     switch (action.type) {
         case ActionType.Click:
             return `Click — ${action.selectorValue || '(empty)'}`;
+        case ActionType.ClickByText:
+            return `Click by text "${action.text || '...'}"`;
         case ActionType.Select:
             return `Select — ${action.selectorValue || '(empty)'}`;
         case ActionType.SelectOption:
